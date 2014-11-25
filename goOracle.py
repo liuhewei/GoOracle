@@ -104,18 +104,36 @@ class GoOracleCommand(sublime_plugin.TextCommand):
         env = get_setting("env")
 
         # Build oracle cmd.
-        cmd = "export GOPATH=\"%(go_path)s\"; export PATH=%(path)s; oracle -pos=%(file_path)s:%(pos)s -format=%(output_format)s %(mode)s %(scope)s"  % {
-        "go_path": env["GOPATH"],
-        "path": env["PATH"],
-        "file_path": self.view.file_name(),
-        "pos": pos,
-        "output_format": get_setting("oracle_format"),
-        "mode": mode,
-        # TODO if scpoe is not set, use main.go under pwd or sublime project path.
-        "scope": ' '.join(get_setting("oracle_scope"))} 
+        if sublime.platform() == 'windows':
+            gopath = ""
+            for v in env["GOPATH"].split(';'):
+                gopath = gopath + '"' + v + '";'
+
+            cmd = "SET GOPATH=%(go_path)s& oracle -pos=%(file_path)s:%(pos)s -format=%(output_format)s %(mode)s %(scope)s"  % {
+            "go_path": gopath,
+            # "path": env["PATH"],
+            "file_path": self.view.file_name(),
+            "pos": pos,
+            "output_format": get_setting("oracle_format"),
+            "mode": mode,
+            # TODO if scpoe is not set, use main.go under pwd or sublime project path.
+            "scope": ' '.join(get_setting("oracle_scope"))}
+        else:
+            cmd = "export GOPATH=\"%(go_path)s\"; export PATH=%(path)s; oracle -pos=%(file_path)s:%(pos)s -format=%(output_format)s %(mode)s %(scope)s"  % {
+            "go_path": env["GOPATH"],
+            "path": env["PATH"],
+            "file_path": self.view.file_name(),
+            "pos": pos,
+            "output_format": get_setting("oracle_format"),
+            "mode": mode,
+            # TODO if scpoe is not set, use main.go under pwd or sublime project path.
+            "scope": ' '.join(get_setting("oracle_scope"))} 
 
         if "GOROOT" in env:
-            gRoot = "export GOROOT=\"%s\"; " % env["GOROOT"] 
+            if sublime.platform() == 'windows':
+                gRoot = "SET GOROOT=%s&" % env["GOROOT"]
+            else:
+                gRoot = "export GOROOT=\"%s\"; " % env["GOROOT"] 
             cmd = gRoot + cmd
 
         sublime.set_timeout_async(lambda: self.runInThread(cmd, callback), 0)
@@ -123,7 +141,10 @@ class GoOracleCommand(sublime_plugin.TextCommand):
     def runInThread(self, cmd, callback):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, shell=True)
         out, err = proc.communicate()
-        callback(out.decode('utf-8'), err.decode('utf-8'))
+        if sublime.platform() == 'windows':
+            callback(out.decode('cp936'), err.decode('cp936'))
+        else:
+            callback(out.decode('utf-8'), err.decode('utf-8'))
 
 
 class GoOracleWriteResultsCommand(sublime_plugin.TextCommand):
@@ -182,17 +203,18 @@ class GoOracleOpenResultCommand(sublime_plugin.EventListener):
 
         format = get_setting("oracle_format")
 
-        # "filename:line:col" pattern for json
-        m = re.search("\"([^\"]+):([0-9]+):([0-9]+)\"", text)
-
-        # >filename:line:col< pattern for xml
-        if m == None:
+        if format == 'json':
+            # "filename:line:col" pattern for json
+            m = re.search("\"([^\"]+):([0-9]+):([0-9]+)\"", text)
+        elif format == 'xml':
+            # >filename:line:col< pattern for xml
             m = re.search(">([^<]+):([0-9]+):([0-9]+)<", text)
-
-        # filename:line.col-line.col: pattern for plain
-        if m == None:
-            m = re.search("^([^:]+):([0-9]+).([0-9]+)[-: ]", text)
-        
+        elif format == 'plain':
+            # filename:line.col-line.col: pattern for plain
+            m = re.search("^(.+\.go):([0-9]+).([0-9]+)[-: ]", text)
+        else:
+            sublime.error_message("oracle_format setting is invalid: %s", format)
+            
         if m:
             w = view.window()
             new_view = w.open_file(m.group(1) + ':' + m.group(2) + ':' + m.group(3), sublime.ENCODED_POSITION)
